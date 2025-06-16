@@ -1,6 +1,10 @@
+import PyPDF2
+import docx
+import string
+import re
+
 def ler_pdf(caminho):
     """Lê arquivos PDF com tratamento melhorado"""
-    import PyPDF2
     texto = ""
     try:
         with open(caminho, 'rb') as f:
@@ -13,7 +17,6 @@ def ler_pdf(caminho):
 
 def ler_docx(caminho):
     """Lê arquivos DOCX"""
-    import docx
     try:
         doc = docx.Document(caminho)
         return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
@@ -35,52 +38,75 @@ def ler_txt(caminho):
             return ""
 
 def buscar_palavras(texto, palavras):
-    """Busca múltiplas palavras ou frases no texto"""
+    """Busca múltiplas palavras ou frases no texto considerando palavras completas"""
     resultados = {}
-    texto_lower = texto.lower()
-
-    # Remove pontuação para busca mais abrangente
-    import string
-    texto_sem_pontuacao = texto.translate(str.maketrans('', '', string.punctuation))
-    texto_sem_pontuacao_lower = texto_sem_pontuacao.lower()
 
     for palavra in palavras:
         palavra = palavra.strip()
         if not palavra:
             continue
 
-        palavra_lower = palavra.lower()
-        palavra_sem_pontuacao = palavra.translate(str.maketrans('', '', string.punctuation)).lower()
-
         encontradas = []
-        start = 0
 
-        # Busca tanto a palavra original quanto sem pontuação
-        for termo_busca in [palavra_lower, palavra_sem_pontuacao]:
-            if not termo_busca:
-                continue
+        # Para palavras únicas (sem espaços)
+        if ' ' not in palavra:
+            # Remove pontuação da palavra de busca
+            palavra_limpa = palavra.translate(str.maketrans('', '', string.punctuation)).lower()
 
-            while True:
-                pos = texto_sem_pontuacao_lower.find(termo_busca, start) if termo_busca == palavra_sem_pontuacao else texto_lower.find(termo_busca, start)
-                if pos == -1:
-                    break
+            # Usa regex para encontrar apenas palavras completas
+            padrao = re.compile(r'\b' + re.escape(palavra_limpa) + r'\b', re.IGNORECASE)
+
+            for match in padrao.finditer(texto):
+                pos = match.start()
 
                 # Extrai contexto
                 inicio = max(0, pos - 30)
-                fim = min(len(texto), pos + len(termo_busca) + 30)
+                fim = min(len(texto), pos + len(palavra_limpa) + 30)
                 contexto = texto[inicio:fim].replace('\n', ' ')
 
-                # Remove pontuação do contexto para exibição
-                contexto_sem_pontuacao = contexto.translate(str.maketrans('', '', string.punctuation))
-
                 if inicio > 0:
-                    contexto_sem_pontuacao = "..." + contexto_sem_pontuacao
+                    contexto = "..." + contexto
                 if fim < len(texto):
-                    contexto_sem_pontuacao = contexto_sem_pontuacao + "..."
+                    contexto = contexto + "..."
 
                 linha = texto.count('\n', 0, pos) + 1
-                encontradas.append(f"Linha {linha}: {contexto_sem_pontuacao.strip()}")
-                start = pos + len(termo_busca)
+                encontradas.append(f"Linha {linha}: {contexto.strip()}")
+
+        # Para frases (com espaços)
+        else:
+            frase_lower = palavra.lower()
+            start = 0
+
+            while True:
+                pos = texto.lower().find(frase_lower, start)
+                if pos == -1:
+                    break
+
+                # Verifica se é uma correspondência exata (não parte de outra palavra)
+                inicio_frase = pos
+                fim_frase = pos + len(frase_lower)
+
+                # Verifica os caracteres antes e depois
+                antes_ok = (inicio_frase == 0 or
+                           texto[inicio_frase-1] in string.whitespace + string.punctuation)
+                depois_ok = (fim_frase == len(texto) or
+                            texto[fim_frase] in string.whitespace + string.punctuation)
+
+                if antes_ok and depois_ok:
+                    # Extrai contexto
+                    inicio = max(0, pos - 30)
+                    fim = min(len(texto), pos + len(frase_lower) + 30)
+                    contexto = texto[inicio:fim].replace('\n', ' ')
+
+                    if inicio > 0:
+                        contexto = "..." + contexto
+                    if fim < len(texto):
+                        contexto = contexto + "..."
+
+                    linha = texto.count('\n', 0, pos) + 1
+                    encontradas.append(f"Linha {linha}: {contexto.strip()}")
+
+                start = pos + 1
 
         # Remove duplicados mantendo a ordem
         seen = set()
@@ -109,7 +135,6 @@ def main():
 
     lista_caminhos = [c.strip().strip('"') for c in caminhos.split(",") if c.strip()]
 
-    # Pede as palavras ou frases para buscar
     palavras_input = input("Digite as palavras ou frases a buscar (separadas por vírgula): ").strip()
     if not palavras_input:
         print("Nenhuma palavra ou frase fornecida!")
@@ -120,7 +145,6 @@ def main():
     resultados_por_arquivo = {}
 
     for caminho in lista_caminhos:
-        # Verifica extensão do arquivo
         if caminho.lower().endswith('.pdf'):
             texto = ler_pdf(caminho)
         elif caminho.lower().endswith('.docx'):
@@ -135,11 +159,9 @@ def main():
             print(f"Não foi possível ler o arquivo {caminho} ou o arquivo está vazio.")
             continue
 
-        # Realiza a busca
         resultados = buscar_palavras(texto, palavras)
         resultados_por_arquivo[caminho] = resultados
 
-    # Avalia quais arquivos têm mais ocorrências
     relevancia = avaliar_relevancia(resultados_por_arquivo)
 
     print("\n" + "="*50)
@@ -147,7 +169,6 @@ def main():
     for arquivo, total in relevancia:
         print(f"{arquivo}: {total} ocorrências no total")
 
-    # Mostra resultados detalhados para cada arquivo
     for arquivo, resultados in resultados_por_arquivo.items():
         print("\n" + "="*50)
         print(f"\n📂 ARQUIVO: {arquivo}")
@@ -155,7 +176,7 @@ def main():
         for palavra, ocorrencias in resultados.items():
             print(f"\n🔍 Resultados para '{palavra}':")
             if ocorrencias:
-                for i, ocorrencia in enumerate(ocorrencias[:5], 1):  # Mostra até 5 ocorrências por palavra/frase
+                for i, ocorrencia in enumerate(ocorrencias[:5], 1):
                     print(f"{i}. {ocorrencia}")
                 if len(ocorrencias) > 5:
                     print(f"... e mais {len(ocorrencias)-5} ocorrências (total: {len(ocorrencias)})")
@@ -164,9 +185,9 @@ def main():
 
     print("\n" + "="*50)
     print("\nOs melhores arquivos são:")
-    for i, (arquivo, total) in enumerate(relevancia[:3], 1):  # Mostra os top 3
+    for i, (arquivo, total) in enumerate(relevancia[:3], 1):
         if total > 0:
             print(f"{i}. {arquivo} ({total} ocorrências)")
 
 if __name__ == "__main__":
-    main()''
+    main()
